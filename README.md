@@ -9,9 +9,9 @@ integration patterns we recommend (a *Send to Datazap* action, and opt-in auto-u
 
 ## Implementations
 
-| Language | Guide | Status |
-|---|---|---|
-| C# / .NET 8 (MAUI, WPF, WinForms, console) | [`csharp/`](csharp/) | Complete |
+| Language | Guide |
+|---|---|
+| C# / .NET 8 (MAUI, WPF, WinForms, console) | [`csharp/`](csharp/) |
 
 More languages will be added here. If you are integrating in something else, the C# guide still documents the API
 end to end; only the code is language-specific.
