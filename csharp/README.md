@@ -3,8 +3,7 @@
 .NET 8 · OAuth 2.0 Authorization Code + PKCE · HttpClient · .NET MAUI and desktop
 
 The code in this guide is also in [`code/`](code/) as plain files, one per step, so you can copy a whole class
-without pulling it out of a document. They are the same snippets that appear inline below. A PDF of this guide is in
-[`docs/`](../docs/).
+without pulling it out of a document. They are the same snippets that appear inline below.
 
 ## Introduction
 
