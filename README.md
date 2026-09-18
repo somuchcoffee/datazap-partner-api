@@ -19,8 +19,8 @@ end to end; only the code is language-specific.
 ## Getting set up
 
 You send us the redirect URIs your app will use and we send back a `client_id`. Mobile and desktop apps are registered
-as public clients, so there is no client secret to protect. Details are in the guide for your language, under
-*Getting set up* and *Going live*.
+as public clients and authenticate with PKCE, so no client secret is issued. Details are in the guide for your language,
+under *Getting set up* and *Going live*.
 
 Questions or a stuck integration: **support@datazap.me**.
 
