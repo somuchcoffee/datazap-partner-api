@@ -71,7 +71,7 @@ There is no client secret. Your app is registered as a *public client*: a mobile
 2. Open the consent page in the system browser with your `client_id`, redirect URI, scopes and challenge.
 3. The user signs in if needed and taps *Authorize*. Datazap redirects to your redirect URI with `code` and `state`.
 4. Exchange the code (plus the PKCE verifier) for an access token and a refresh token.
-5. Call the API with `Authorization: Bearer `. Refresh when you get a 401.
+5. Call the API with `Authorization: Bearer <access_token>`. Refresh when you get a 401.
 
 ## Step 1 · PKCE helper
 

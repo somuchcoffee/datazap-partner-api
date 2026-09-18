@@ -12,8 +12,9 @@ integration patterns we recommend (a *Send to Datazap* action, and opt-in auto-u
 | Language | Guide |
 |---|---|
 | C# / .NET 8 (MAUI, WPF, WinForms, console) | [`csharp/`](csharp/) |
+| JavaScript / Node 20+, Electron | [`javascript/`](javascript/) |
 
-More languages will be added here. If you are integrating in something else, the C# guide still documents the API
+More languages will be added here. If you are integrating in something else, either guide still documents the API
 end to end; only the code is language-specific.
 
 ## Getting set up
