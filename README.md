@@ -24,13 +24,6 @@ under *Getting set up* and *Going live*.
 
 Questions or a stuck integration: **support@datazap.me**.
 
-## Layout
-
-```
-csharp/    C# guide (README.md) and its code as plain files under code/
-docs/      PDF versions of the guides
-```
-
 ## License
 
 MIT. Copy whatever is useful.
