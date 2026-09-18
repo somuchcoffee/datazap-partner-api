@@ -1,0 +1,10 @@
+<!-- Add inside the top-level <dict> of Info.plist. -->
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleURLName</key>
+    <string>Datazap callback</string>
+    <key>CFBundleURLSchemes</key>
+    <array><string>com.yourcompany.yourapp</string></array>
+  </dict>
+</array>

@@ -1,0 +1,6 @@
+<!-- Add inside <manifest>. Android 11+ needs this so Custom Tabs are visible to the app. -->
+<queries>
+  <intent>
+    <action android:name="android.support.customtabs.action.CustomTabsService" />
+  </intent>
+</queries>
