@@ -12,7 +12,8 @@ const BASE = 'https://datazap.me/';
 // makes a retried upload return the existing log instead of a copy.
 export class DatazapClient {
   #store;
-  #refreshing = null;   // in-flight refresh promise, so concurrent callers share one refresh
+  #refreshing = null;     // in-flight refresh promise, so concurrent callers share one refresh
+  #disconnecting = false; // blocks a new refresh from starting while disconnect() runs
 
   constructor(clientId, store) {
     this.clientId = clientId;
@@ -52,20 +53,26 @@ export class DatazapClient {
   }
 
   async disconnect({ signal } = {}) {
-    // Wait for any in-flight refresh so it cannot re-save tokens after we clear them
-    await this.#refreshing?.catch(() => {});
-    const tokens = await this.#store.load();
-    if (!tokens) return;
+    // Refuse new refreshes, then wait out any in-flight one, so nothing can re-save
+    // a rotated token pair after we clear the store
+    this.#disconnecting = true;
     try {
-      // Best effort: revoke server-side so it disappears from the user's settings
-      await fetch(new URL('api/integrations/revoke', BASE), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: tokens.refreshToken, client_id: this.clientId }),
-        signal,
-      });
+      await this.#refreshing?.catch(() => {});
+      const tokens = await this.#store.load();
+      if (!tokens) return;
+      try {
+        // Best effort: revoke server-side so it disappears from the user's settings
+        await fetch(new URL('api/integrations/revoke', BASE), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tokens.refreshToken, client_id: this.clientId }),
+          signal,
+        });
+      } finally {
+        await this.#store.clear();   // local disconnect succeeds even if revoke fails
+      }
     } finally {
-      await this.#store.clear();   // local disconnect succeeds even if revoke fails
+      this.#disconnecting = false;
     }
   }
 
@@ -120,7 +127,9 @@ export class DatazapClient {
     let response = await this.#sendWithToken(build, tokens.accessToken, signal);
     if (response.status !== 401) return response;
 
-    // Rejected anyway (clock skew, revoked elsewhere): refresh once and retry once
+    // Rejected anyway (clock skew, revoked elsewhere): refresh once and retry once.
+    // Cancel the discarded body first so its connection goes back to the pool.
+    await response.body?.cancel();
     tokens = await this.#refresh(tokens, signal);
     response = await this.#sendWithToken(build, tokens.accessToken, signal);
 
@@ -141,6 +150,8 @@ export class DatazapClient {
 
   // Serialized: concurrent callers await the same in-flight refresh instead of racing
   #refresh(current, signal) {
+    if (this.#disconnecting)
+      return Promise.reject(new DatazapAuthError('Not connected. Call connect() first.', null, 401));
     this.#refreshing ??= this.#doRefresh(current, signal).finally(() => { this.#refreshing = null; });
     return this.#refreshing;
   }

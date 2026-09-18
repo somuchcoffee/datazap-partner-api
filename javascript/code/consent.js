@@ -3,7 +3,8 @@ import { exec } from 'node:child_process';
 import { platform } from 'node:process';
 import { DatazapAuthError } from './errors.js';
 
-// Opens a URL in the user's default browser. In Electron use shell.openExternal(url) instead.
+// Plain-Node fallback for opening the default browser. In Electron, use shell.openExternal(url)
+// from the main process instead; it is the supported path and needs no shell commands.
 export function openBrowser(url) {
   const cmd = platform === 'win32' ? `start "" "${url}"`
     : platform === 'darwin' ? `open "${url}"`

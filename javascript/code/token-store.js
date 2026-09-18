@@ -3,7 +3,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 // Any object with load(), save(tokens) and clear() works as a token store.
 // tokens is { accessToken, refreshToken, expiresAt } with expiresAt as epoch milliseconds.
 
-// Electron: encrypted with the OS keychain via safeStorage
+// Electron, main process only: encrypted via safeStorage (verify the backend on Linux)
 export class SafeStorageTokenStore {
   constructor(safeStorage, filePath) {
     this.safeStorage = safeStorage;

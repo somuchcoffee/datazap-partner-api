@@ -34,9 +34,9 @@ Both patterns are covered with code under *Integration patterns* after the share
 
 ## Overview
 
-Datazap uses OAuth 2.0 Authorization Code with PKCE. The authorization flow follows the standard protocol, with one Datazap-specific difference: the token endpoint accepts a JSON body rather than `application/x-www-form-urlencoded`, so libraries that assume form-encoded token requests may need a custom token exchange. Everything in this guide is written against the built-in `fetch`, `FormData` and `node:crypto`, so it drops into a Node 20+ or Electron project with no packages.
+Datazap uses OAuth 2.0 Authorization Code with PKCE. The authorization flow follows the standard protocol, with one Datazap-specific difference: the token endpoint accepts a JSON body rather than `application/x-www-form-urlencoded`, so libraries that assume form-encoded token requests may need a custom token exchange. Everything in this guide is written against the built-in `fetch`, `FormData` and `node:crypto`, so it drops into a Node 20+ or Electron project with no packages. One caveat: `fs.openAsBlob()`, used to stream files into `FormData` in Step 6, is available in Node 20 but marked experimental there; it is stable in newer releases.
 
-**Which JavaScript this is for.** The code targets a desktop app (Electron, or a Node CLI or service running on the user's machine), where you can listen on a loopback port for the OAuth redirect and read log files from disk. A browser-only web app cannot do either of those, and it also cannot be a public client in the same way: see *Web apps* at the end for what changes.
+**Which JavaScript this is for.** The code targets a desktop app (Electron, or a Node CLI or service running on the user's machine), where you can listen on a loopback port for the OAuth redirect and read log files from disk. A browser-only web app can do neither; see *Browser-only apps* at the end.
 
 ### Getting set up
 
@@ -175,7 +175,8 @@ import { exec } from 'node:child_process';
 import { platform } from 'node:process';
 import { DatazapAuthError } from './errors.js';
 
-// Opens a URL in the user's default browser. In Electron use shell.openExternal(url) instead.
+// Plain-Node fallback for opening the default browser. In Electron, use shell.openExternal(url)
+// from the main process instead; it is the supported path and needs no shell commands.
 export function openBrowser(url) {
   const cmd = platform === 'win32' ? `start "" "${url}"`
     : platform === 'darwin' ? `open "${url}"`
@@ -259,7 +260,7 @@ const tokens = await response.json();
 
 ## Step 5 · Store the tokens
 
-Persist the access token, the refresh token and the computed expiry. Never log tokens, and never keep them in `localStorage` in a renderer process. In Electron, use `safeStorage` to encrypt them with the OS keychain (Keychain on macOS, DPAPI on Windows, libsecret on Linux) and write the ciphertext to `app.getPath('userData')`. In a plain Node app, a package like `keytar` does the same; the file store below is for development only.
+Persist the access token, the refresh token and the computed expiry. Never log tokens, and never keep them in `localStorage` in a renderer process. In Electron, keep token storage in the main process and use `safeStorage` to encrypt them, writing the ciphertext to `app.getPath('userData')`. On macOS and Windows it is OS-backed (Keychain, DPAPI); on Linux, check `safeStorage.getSelectedStorageBackend()` and treat `basic_text` as no protection at all. In a plain Node desktop app, use an actively maintained credential-store package for the target OS. The file store below is for development only.
 
 *token-store.js*
 
@@ -269,7 +270,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 // Any object with load(), save(tokens) and clear() works as a token store.
 // tokens is { accessToken, refreshToken, expiresAt } with expiresAt as epoch milliseconds.
 
-// Electron: encrypted with the OS keychain via safeStorage
+// Electron, main process only: encrypted via safeStorage (verify the backend on Linux)
 export class SafeStorageTokenStore {
   constructor(safeStorage, filePath) {
     this.safeStorage = safeStorage;
@@ -315,7 +316,7 @@ The class below covers token exchange, refresh, and the Datazap API calls. A few
 - **Persist the refresh response before anything else.** If the network drops after Datazap rotated the tokens but before your app stored the new pair, that installation has to reconnect. The client saves first and returns second for that reason.
 - **Only `invalid_grant` ends the session.** A refresh that fails with a 5xx or a 429 is a temporary problem and keeps the stored tokens. Only `invalid_grant` (the user disconnected, or authorized again elsewhere) clears them.
 - **Requests are built by a factory.** A `FormData` holding file streams can only be sent once, so a retry after a 401 rebuilds the body and reopens the files.
-- **Every call takes an `AbortSignal`.** `fetch` has no default timeout, which is right for large uploads on slow links, but it means you must bound calls yourself. `AbortSignal.timeout(ms)` is the simplest way.
+- **Every call takes an `AbortSignal`.** `fetch` has no default timeout, which is right for large uploads on slow links, but it means you must bound calls yourself. `AbortSignal.timeout(ms)` is the simplest way. One consequence of the shared refresh: the caller that starts it also supplies its signal, so if that caller is cancelled, other calls waiting on the same refresh fail too. Give background work a generous bound rather than a tight one.
 
 *datazap-client.js*
 
@@ -334,7 +335,8 @@ const BASE = 'https://datazap.me/';
 // makes a retried upload return the existing log instead of a copy.
 export class DatazapClient {
   #store;
-  #refreshing = null;   // in-flight refresh promise, so concurrent callers share one refresh
+  #refreshing = null;     // in-flight refresh promise, so concurrent callers share one refresh
+  #disconnecting = false; // blocks a new refresh from starting while disconnect() runs
 
   constructor(clientId, store) {
     this.clientId = clientId;
@@ -374,20 +376,26 @@ export class DatazapClient {
   }
 
   async disconnect({ signal } = {}) {
-    // Wait for any in-flight refresh so it cannot re-save tokens after we clear them
-    await this.#refreshing?.catch(() => {});
-    const tokens = await this.#store.load();
-    if (!tokens) return;
+    // Refuse new refreshes, then wait out any in-flight one, so nothing can re-save
+    // a rotated token pair after we clear the store
+    this.#disconnecting = true;
     try {
-      // Best effort: revoke server-side so it disappears from the user's settings
-      await fetch(new URL('api/integrations/revoke', BASE), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: tokens.refreshToken, client_id: this.clientId }),
-        signal,
-      });
+      await this.#refreshing?.catch(() => {});
+      const tokens = await this.#store.load();
+      if (!tokens) return;
+      try {
+        // Best effort: revoke server-side so it disappears from the user's settings
+        await fetch(new URL('api/integrations/revoke', BASE), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tokens.refreshToken, client_id: this.clientId }),
+          signal,
+        });
+      } finally {
+        await this.#store.clear();   // local disconnect succeeds even if revoke fails
+      }
     } finally {
-      await this.#store.clear();   // local disconnect succeeds even if revoke fails
+      this.#disconnecting = false;
     }
   }
 
@@ -442,7 +450,9 @@ export class DatazapClient {
     let response = await this.#sendWithToken(build, tokens.accessToken, signal);
     if (response.status !== 401) return response;
 
-    // Rejected anyway (clock skew, revoked elsewhere): refresh once and retry once
+    // Rejected anyway (clock skew, revoked elsewhere): refresh once and retry once.
+    // Cancel the discarded body first so its connection goes back to the pool.
+    await response.body?.cancel();
     tokens = await this.#refresh(tokens, signal);
     response = await this.#sendWithToken(build, tokens.accessToken, signal);
 
@@ -463,6 +473,8 @@ export class DatazapClient {
 
   // Serialized: concurrent callers await the same in-flight refresh instead of racing
   #refresh(current, signal) {
+    if (this.#disconnecting)
+      return Promise.reject(new DatazapAuthError('Not connected. Call connect() first.', null, 401));
     this.#refreshing ??= this.#doRefresh(current, signal).finally(() => { this.#refreshing = null; });
     return this.#refreshing;
   }
@@ -832,9 +844,9 @@ API errors are `{ "error": "readable message", "code": "stable_code" }`; 413 als
 7. Disconnect from Datazap settings, then call the API: the client clears tokens and prompts to reconnect.
 8. Disconnect the network and upload: the app reports a connection problem rather than crashing, and an auto-upload queue keeps the entry for later.
 
-## Web apps
+## Browser-only apps
 
-A browser-only web app (no Node process, no Electron) differs in three ways. It cannot listen on a loopback port, so the redirect URI is an `https://` page on your site, registered with us as-is. It cannot read files from disk, so uploads come from an `<input type="file">` and the `FormData` gets `File` objects directly. And tokens live in memory or `sessionStorage`, never `localStorage`, since any script on the page can read them. PKCE in the browser uses `crypto.subtle.digest('SHA-256', ...)` instead of `node:crypto`. The API calls themselves are identical. Email us before starting a web integration so we can confirm the redirect setup.
+A browser-only web app is also a public OAuth client and uses the same Authorization Code + PKCE flow, but its architecture differs from this guide: it uses a registered HTTPS redirect instead of a loopback listener, gets files from `<input type="file">` rather than disk paths, is subject to CORS, and has a different token-storage threat model because any same-origin script can read browser storage. The API calls themselves are identical. If you are building a browser-only integration, contact us first so we can confirm the redirect and CORS setup.
 
 ## Confidential clients
 
